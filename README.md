@@ -1,6 +1,16 @@
 # LSDpy
 A Least Squares Deconvolution in Python for analysis of stellar spectra.
 
+## Major Updates (v0.4.0) - C-Code Alignment
+Recent updates have significantly improved accuracy by aligning the core algorithms with the original C-language implementation (Donati et al.):
+
+1. **Physics-based Data Weighting**: Changed from variance weighting ($1/\sigma^2$) to photon-noise weighting ($I_{obs}/\sigma^2$). This correctly down-weights deep spectral lines where photon counts are lower, preventing overfitting of line cores and significantly improving the fit of profile wings.
+2. **Improved Blending/Saturation Logic**: The saturation correction now calculates the *total* line opacity within a velocity window (summing all contributing lines) to determine down-weighting factors, rather than treating lines individually. This better handles complex multiplets and dense spectral regions.
+3. **Advanced Line Filtering**:
+   - **Telluric Rejection**: Automatically excludes lines falling within standard telluric bands (e.g., O2 A/B bands), reducing contamination.
+   - **Coverage Checks**: Filters out lines that fall in spectral gaps or off the edges of the detector orders.
+4. **Smoothing Correction**: Fixed the regularization/smoothing weights to properly use autocorrelation, eliminating high-frequency "jitter" in the output profiles.
+
 ## Basic use
 The main executable is lsdpy.py, there are a set of control parameters specified in the file inlsd.dat
 

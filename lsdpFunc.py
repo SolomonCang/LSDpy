@@ -242,49 +242,50 @@ class mask:
         self.weightI = self.depth / params.normDepth
         self.weightV = self.depth * self.wl * self.lande / (
             params.normDepth * params.normWave * params.normLande)
-        
+
         # New Feature: Saturation Correction (Down-weight lines in crowded regions)
         # Calculate local line density metric (ptot)
         # For each line, sum depths of neighbors within +/- 5 km/s
         ptot_list = np.zeros_like(self.depth)
-        c_speed = 299792.0 # km/s
-        
+        c_speed = 299792.0  # km/s
+
         # Sort is guaranteed by __init__
         # Use simple window search (could be optimized, but N~5000 is fast enough)
-        
+
         # Vectorized density calculation (approximated for speed)
         # Using a fixed window in wavelength corresponding to ~5km/s at typical WL
         # This emulates the nested loop in C version get_weights
-        
+
         for i in range(len(self.wl)):
             wl_current = self.wl[i]
             # 5 km/s window
             delta_wl = wl_current * 5.0 / c_speed
-            
+
             # Simple slice (assuming some sorting, though local search is safer)
             # Find neighbors
-            
+
             # This is O(N^2) potentially, but N=5000 is tiny.
             # Let's use a smarter slice boundaries
             low_bound = wl_current - delta_wl
             high_bound = wl_current + delta_wl
-            
+
             # Since self.wl is sorted:
             # We can just check neighbors until condition fails
             # But numpy bool array is fast
-            
+
             # Strict window check
             in_window = (self.wl > low_bound) & (self.wl < high_bound)
-            ptot = np.sum(self.depth[in_window]) - self.depth[i] # Neighbors only?
-            # C code: ptot = -dd; loop { ptot += prof[...] } -> includes self? 
+            ptot = np.sum(
+                self.depth[in_window]) - self.depth[i]  # Neighbors only?
+            # C code: ptot = -dd; loop { ptot += prof[...] } -> includes self?
             # C: ptot = -dd (starts negative self). Then loop includes self.
             # So ptot = sum(neighbors) + self - self = sum(neighbors).
             # Wait, C code: if (ptot > 1.0) dd *= 1.0/ptot
             # If ptot is sum of *all* depths in window (including self), then ptot-self
-            # Actually C: "ptot = -dd; for ... ptot += prof[k]" -> includes self. 
+            # Actually C: "ptot = -dd; for ... ptot += prof[k]" -> includes self.
             # So ptot is sum of all lines in window (including self) minus self? No.
             # ptot = -dd(self) + sum(others + self) = sum(others).
-            # Wait, if ptot > 1.0. If ptot is just sum of others, and others=0, ptot=0. 
+            # Wait, if ptot > 1.0. If ptot is just sum of others, and others=0, ptot=0.
             # Then no scaling.
             # If others exist, ptot > 0.
             # Let's re-read carefully:
@@ -293,16 +294,16 @@ class mask:
             # So ptot = Sum(all in window) - depth(self).
             # If ptot > 1.0: depth(self) *= 1/ptot.
             # So we divide by Sum(neighbors).
-            
+
             # Correction: If ptot > 1.0, scale.
-            
+
             # C-code logic: ptot = sum of ALL depths in window (including self)
             sum_all = np.sum(self.depth[in_window])
-            
+
             if sum_all > 1.0:
-                 # downweight
-                 self.weightI[i] *= (1.0 / sum_all)
-                 self.weightV[i] *= (1.0 / sum_all)
+                # downweight
+                self.weightI[i] *= (1.0 / sum_all)
+                self.weightV[i] *= (1.0 / sum_all)
 
         return
 
@@ -316,20 +317,14 @@ class mask:
         """
         initial_count = len(self.wl)
         keep_mask = np.ones(initial_count, dtype=bool)
-        c_speed = 299792.458 # km/s
+        c_speed = 299792.458  # km/s
 
         # 1. Telluric Rejection
         # Ranges from line_noplot.c: wtl/wtu (nm)
         # {627, 686, 716, 759, 813, 895} to {632, 697, 734, 770, 835, 986}
-        tellurics = [
-            (627.0, 632.0),
-            (686.0, 697.0),
-            (716.0, 734.0),
-            (759.0, 770.0),
-            (813.0, 835.0),
-            (895.0, 986.0)
-        ]
-        
+        tellurics = [(627.0, 632.0), (686.0, 697.0), (716.0, 734.0),
+                     (759.0, 770.0), (813.0, 835.0), (895.0, 986.0)]
+
         num_telluric = 0
         for w_min, w_max in tellurics:
             # Check for lines within telluric bands
@@ -338,20 +333,20 @@ class mask:
             if count > 0:
                 keep_mask[in_telluric] = False
                 num_telluric += count
-            
+
         if verbose and num_telluric > 0:
             print(f"Telluric rejection: removed {num_telluric} lines.")
 
         # 2. Coverage Rejection (Spectral Orders/Gaps)
         # Identify valid spectral segments from observation wavelengths
         # Assumes obs.wl is sorted (which it is)
-        
+
         wl_sep = np.diff(obs.wl)
         median_sep = np.median(wl_sep)
         # Detect gaps (orders) -> step > 50 * median
         # C uses separate logic for orders, but this gap detection is robust
         gap_indices = np.where(wl_sep > 50 * median_sep)[0]
-        
+
         # Build segments [start_wl, end_wl]
         segments = []
         last_idx = 0
@@ -359,35 +354,39 @@ class mask:
             segments.append((obs.wl[last_idx], obs.wl[gap_idx]))
             last_idx = gap_idx + 1
         segments.append((obs.wl[last_idx], obs.wl[-1]))
-        
+
         # Line requires coverage from: wl*(1+v_start/c) to wl*(1+v_end/c)
         # Add margin 'side' from C-code (5 pixels ~ 10 km/s? let's assume margin factor)
         # Here we use the exact profile extent required by LSD
-        
+
         velStart = prof.vel[0]
         velEnd = prof.vel[-1]
-        
+
         line_min_req = self.wl * (1.0 + velStart / c_speed)
         line_max_req = self.wl * (1.0 + velEnd / c_speed)
-        
+
         # Vectorized check: does line fall completely inside ANY segment?
         is_covered = np.zeros(initial_count, dtype=bool)
-        
+
         for seg_min, seg_max in segments:
             # A line is covered if its REQUIRED range is within the SEGMENT range
             # Range check: seg_min <= line_min_req AND line_max_req <= seg_max
             covered_in_this_seg = (segment_min_check := (line_min_req >= seg_min)) & \
                                   (segment_max_check := (line_max_req <= seg_max))
             is_covered |= covered_in_this_seg
-            
+
         # Reject lines not covered
         not_covered_count = np.sum((~is_covered) & keep_mask)
         keep_mask &= is_covered
-        
+
         if verbose:
             if not_covered_count > 0:
-                print(f"Coverage rejection: removed {not_covered_count} lines (partial/off-edge).")
-            print(f"Final mask: {np.sum(keep_mask)} lines used (of {initial_count}).")
+                print(
+                    f"Coverage rejection: removed {not_covered_count} lines (partial/off-edge)."
+                )
+            print(
+                f"Final mask: {np.sum(keep_mask)} lines used (of {initial_count})."
+            )
 
         # Apply filtering
         self.wl = self.wl[keep_mask]
@@ -396,7 +395,7 @@ class mask:
         self.excite = self.excite[keep_mask]
         self.lande = self.lande[keep_mask]
         self.iuse = self.iuse[keep_mask]
-        
+
         # Filter weights if they exist
         if hasattr(self, 'weightI'):
             self.weightI = self.weightI[keep_mask]
@@ -538,11 +537,11 @@ class prof:
 def buildInvSig2(obs):
     #construct the diagonal matrix of 1/sigma^2, dimension of observation X observation
     #Use a sparse matrix for the nobs x nobs array (otherwise its several Gb!)
-    
+
     # Match C-version preprocessing: Weight by I / sigma^2
     # This accounts for photon noise correlations (sigma ~ sqrt(I))
     # and effectively down-weights deep lines where I is smaller.
-    
+
     # Determine if specI is Depth (1-I) or Intensity (I)
     # In lsdpy.py, specI is converted to 1-I (depth). continuum ~ 0.
     # If mean is small (<0.5), it's likely depth.
@@ -552,16 +551,16 @@ def buildInvSig2(obs):
     else:
         # It is Intensity.
         intensity = obs.specI
-        
+
     # Sanity check intensity (avoid <= 0 or NaNs)
-    intensity = np.maximum(intensity, 0.0001) 
-    
+    intensity = np.maximum(intensity, 0.0001)
+
     # Calculate weights: I / sigma^2
     tmp = intensity * (obs.specSig**(-2))
-    
+
     # Original (Incorrect matching for C code):
     # tmp = obs.specSig**(-2)
-    
+
     sparseS2 = scipy.sparse.diags(tmp, offsets=0)
 
     return sparseS2
