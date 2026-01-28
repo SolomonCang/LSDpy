@@ -40,6 +40,9 @@ mask.setWeights(params)
 #initial setup
 prof = lsdpFunc.prof(params)
 
+# Filter mask lines based on coverage and tellurics (New Feature matching C-code)
+mask.filterLines(obs, prof)
+
 #trim the observation's wavelength range
 obs.setInRange(mask, prof)
 
